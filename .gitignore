@@ -1,6 +1,23 @@
-*.i
-*.ii
-*.gpu
+# Compiled binaries
+*.exe
+*.o
+*.out
+
+# Data files
+data/*.csv
+data/*.txt
+data/*.bin
+
+# Benchmark results
+benchmark_results.csv
+*.csv
+
+# Editor files
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build artifacts
 *.ptx
 *.cubin
-*.fatbin
