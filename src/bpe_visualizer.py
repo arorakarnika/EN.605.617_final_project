@@ -3,7 +3,7 @@ Visualize BPE benchmark results from the CUDA sweep CSV.
 
 What is timed
 -------------
-GPU side (from the CSV produced by ./vocab_lookup.exe --bpe --sweep --csv ...):
+GPU side (from the CSV produced by ./bpe_tokenizer.exe --sweep --csv ...):
     kernel_*  : kernel-only time. Inputs already on device, outputs stay on
                 device. Compares directly to the per-piece tiktoken loop.
     e2e_*     : H2D pieces + kernel + D2H token IDs per iteration. The 13.6 MB
@@ -116,10 +116,10 @@ def maybe_run_sweep(executable, csv_path, iters, ranks_path, pieces_path):
         return
     if not Path(executable).exists():
         raise SystemExit("Executable {} not found - run 'make' first".format(executable))
-    print("Running sweep: {} --bpe --sweep --csv {}".format(executable, csv_path))
+    print("Running sweep: {} --sweep --csv {}".format(executable, csv_path))
     subprocess.run(
         [
-            executable, "--bpe", "--sweep", "--csv", csv_path,
+            executable, "--sweep", "--csv", csv_path,
             "--iters", str(iters),
             "--ranks", ranks_path,
             "--pieces", pieces_path,
@@ -365,7 +365,7 @@ def main():
     parser.add_argument("--ranks", default="data/bpe_ranks.bin")
     parser.add_argument("--text", required=True,
                         help="Original text file (used for the encode() baseline and regex timing)")
-    parser.add_argument("--executable", default="./vocab_lookup.exe")
+    parser.add_argument("--executable", default="./bpe_tokenizer.exe")
     parser.add_argument("--encoding", default="cl100k_base")
     parser.add_argument("--iters", type=int, default=100,
                         help="Iterations for both the GPU sweep and the tiktoken baselines")

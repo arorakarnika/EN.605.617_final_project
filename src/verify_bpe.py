@@ -1,11 +1,11 @@
 """
 Verify GPU BPE output against tiktoken.
 
-Reads the binary token output produced by ./vocab_lookup.exe --bpe and
+Reads the binary token output produced by ./bpe_tokenizer.exe and
 compares each piece's token ids to what tiktoken produces from the same
 input text. Reports per-piece mismatches and an overall pass/fail summary.
 
-Layout of the GPU token file (matches write_token_output() in vocab_lookup.cu):
+Layout of the GPU token file (matches write_token_output() in src/bpe_io.cu):
     uint32 num_pieces
     repeat num_pieces times:
         uint32 count
