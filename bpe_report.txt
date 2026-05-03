@@ -2,37 +2,65 @@ BPE Benchmark Report
 ======================================================================
 
 Tiktoken baselines (Python, measured on this run):
-  encode_full     :  12.937 ms  ->    7.40 MB/s  (1972780 tok/s)
-  per_piece_loop  :   8.492 ms  ->   11.27 MB/s  (3005209 tok/s)
-  regex_only      :  16.276 ms  ->    5.88 MB/s
+  encode_full     : 124.072 ms  ->    7.92 MB/s  (2059346 tok/s)
+  per_piece_loop  :  96.042 ms  ->   10.23 MB/s  (2660391 tok/s)
+  regex_only      : 166.158 ms  ->    5.91 MB/s
 
-Best V1 kernel-only: threads=64 blocks=351
-  time=1.261 ms  mbps=75.90  tok/s=20239176
-  speedup vs per-piece loop: 6.73x  (BPE-merge-only comparison)
-Best V1 end-to-end: threads=64 blocks=351
-  time=1.531 ms  mbps=62.51  tok/s=16668142
-  speedup vs encode():       8.45x  (pipeline comparison)
+=== Best V1 configurations ===
+Kernel-only (BPE merge work, excludes regex on both sides):
+  threads=128 blocks=1757  time=7.222 ms  mbps=136.06  tok/s=35378788
+  speedup vs tiktoken per_piece_loop: 13.30x
+End-to-end (kernel + transfers, GPU regex amortized off-clock):
+  threads=128 blocks=1757  time=9.034 ms  mbps=108.78  tok/s=28283674
+  speedup vs tiktoken encode():       13.73x  (favors GPU - regex excluded)
+Pipeline (apples-to-apples: e2e + Python regex pre-split):
+  threads=128 blocks=1757  time=175.192 ms  (166.158 regex + 9.034 e2e)
+  mbps=5.61  tok/s=1458446
+  speedup vs tiktoken encode():       0.71x  <-- truly fair number
 
-Best V2 kernel-only: threads=64 blocks=22443
-  time=2.415 ms  mbps=39.62  tok/s=10566278
-  speedup vs per-piece loop: 3.52x  (BPE-merge-only comparison)
-Best V2 end-to-end: threads=64 blocks=22443
-  time=2.701 ms  mbps=35.44  tok/s=9449932
-  speedup vs encode():       4.79x  (pipeline comparison)
+=== Best V2 configurations ===
+Kernel-only (BPE merge work, excludes regex on both sides):
+  threads=64 blocks=224821  time=23.995 ms  mbps=40.95  tok/s=10648484
+  speedup vs tiktoken per_piece_loop: 4.00x
+End-to-end (kernel + transfers, GPU regex amortized off-clock):
+  threads=64 blocks=224821  time=26.263 ms  mbps=37.42  tok/s=9728951
+  speedup vs tiktoken encode():       4.72x  (favors GPU - regex excluded)
+Pipeline (apples-to-apples: e2e + Python regex pre-split):
+  threads=64 blocks=224821  time=192.421 ms  (166.158 regex + 26.263 e2e)
+  mbps=5.11  tok/s=1327860
+  speedup vs tiktoken encode():       0.64x  <-- truly fair number
 
-Note: GPU end-to-end excludes the Python regex pre-split, which
-tiktoken.encode() does internally in Rust. Python regex_only timing
-above lets you mentally combine: realistic pipeline = e2e + regex_only.
+How to read these speedups:
+  - kernel-only vs per_piece_loop: how much faster the GPU's BPE merge
+    code is than tiktoken's Rust BPE core (both fed pre-split pieces).
+  - end-to-end vs encode(): how much faster a tokenizer service backed
+    by this kernel is, ASSUMING the regex pre-split is amortized
+    (cached, batched, or moved off the critical path).
+  - pipeline vs encode(): the truly apples-to-apples number. Includes
+    Python regex on the GPU side, matching tiktoken.encode()'s internal
+    Rust regex + BPE. Smaller speedup because Python regex is now the
+    new bottleneck - replacing it with PCRE2 in C++ would unlock the
+    full kernel-only speedup.
 
 All configurations:
- tag kernel  threads_per_block  blocks  iterations  num_pieces  input_bytes  num_tokens  kernel_time_ms  kernel_mbps  kernel_tokens_per_sec  e2e_time_ms  e2e_mbps  e2e_tokens_per_sec
- NaN     v1                 32     702         100       22443       100355       25521        1.301623      73.5282             19607058.0     1.561735   61.2818          16341443.0
- NaN     v1                 64     351         100       22443       100355       25521        1.260970      75.8987             20239176.0     1.531124   62.5070          16668142.0
- NaN     v1                128     176         100       22443       100355       25521        1.267197      75.5258             20139734.0     1.535246   62.3392          16623399.0
- NaN     v1                256      88         100       22443       100355       25521        1.292122      74.0688             19751222.0     1.565306   61.1420          16304161.0
- NaN     v1                512      44         100       22443       100355       25521        1.271639      75.2619             20069378.0     1.542547   62.0441          16544713.0
- NaN     v1               1024      22         100       22443       100355       25521        1.355223      70.6201             18831588.0     1.627313   58.8123          15682904.0
- NaN     v2                 32   22443         100       22443       100355       25521        2.486894      38.4841             10262198.0     2.757878   34.7028           9253855.0
- NaN     v2                 64   22443         100       22443       100355       25521        2.415325      39.6245             10566278.0     2.700654   35.4381           9449932.0
- NaN     v2                128   22443         100       22443       100355       25521        2.811290      34.0434              9078039.0     3.098008   30.8927           8237873.5
- NaN     v2                256   22443         100       22443       100355       25521        4.543095      21.0663              5617537.0     4.820860   19.8525           5293868.0
+ tag kernel  threads_per_block  blocks  iterations  num_pieces  input_bytes  num_tokens  kernel_time_ms  kernel_mbps  kernel_tokens_per_sec  e2e_time_ms  e2e_mbps  e2e_tokens_per_sec  pipeline_time_ms  pipeline_mbps  pipeline_tokens_per_sec
+ NaN     v1                 32     702         100       22443       100355       25521        1.303859      73.4021             19573432.0     1.565511   61.1340          16302022.0        167.723758       0.570617             1.521609e+05
+ NaN     v1                 64     351         100       22443       100355       25521        1.255008      76.2593             20335334.0     1.530458   62.5342          16675398.0        167.688705       0.570736             1.521927e+05
+ NaN     v1                128     176         100       22443       100355       25521        1.266565      75.5634             20149774.0     1.543751   61.9957          16531810.0        167.701998       0.570691             1.521807e+05
+ NaN     v1                256      88         100       22443       100355       25521        1.292759      74.0323             19741498.0     1.568184   61.0298          16274235.0        167.726431       0.570608             1.521585e+05
+ NaN     v1                512      44         100       22443       100355       25521        1.270047      75.3563             20094536.0     1.544424   61.9687          16524604.0        167.702671       0.570689             1.521800e+05
+ NaN     v1               1024      22         100       22443       100355       25521        1.354669      70.6490             18839286.0     1.626732   58.8333          15688511.0        167.784979       0.570409             1.521054e+05
+ NaN     v2                 32   22443         100       22443       100355       25521        2.485691      38.5028             10267167.0     2.766601   34.5934           9224678.0        168.924848       0.566560             1.510790e+05
+ NaN     v2                 64   22443         100       22443       100355       25521        2.415851      39.6159             10563981.0     2.693868   35.5273           9473736.0        168.852115       0.566804             1.511441e+05
+ NaN     v2                128   22443         100       22443       100355       25521        2.811518      34.0407              9077302.0     3.088520   30.9876           8263180.0        169.246767       0.565482             1.507917e+05
+ NaN     v2                256   22443         100       22443       100355       25521        4.542686      21.0681              5618042.0     4.824056   19.8393           5290361.5        170.982303       0.559742             1.492611e+05
+ NaN     v1                 32    7026         100      224821      1030386      255508        8.843590     111.1147             28891888.0    10.991244   89.4032          23246502.0        177.149491       5.547025             1.442330e+06
+ NaN     v1                 64    3513         100      224821      1030386      255508        7.240186     135.7220             35290252.0     9.192409  106.8983          27795544.0        175.350656       5.603929             1.457126e+06
+ NaN     v1                128    1757         100      224821      1030386      255508        7.222067     136.0625             35378788.0     9.033763  108.7756          28283674.0        175.192010       5.609004             1.458446e+06
+ NaN     v1                256     879         100      224821      1030386      255508        7.453788     131.8327             34278948.0     9.412002  104.4042          27147042.0        175.570249       5.596920             1.455304e+06
+ NaN     v1                512     440         100      224821      1030386      255508        7.780923     126.2900             32837748.0     9.664510  101.6764          26437762.0        175.822757       5.588882             1.453213e+06
+ NaN     v1               1024     220         100      224821      1030386      255508        8.001110     122.8145             31934068.0     9.960411   98.6558          25652354.0        176.118658       5.579492             1.450772e+06
+ NaN     v2                 32  224821         100      224821      1030386      255508       24.680002      39.8157             10352836.0    26.822153   36.6359           9526006.0        192.980400       5.091982             1.324010e+06
+ NaN     v2                 64  224821         100      224821      1030386      255508       23.994778      40.9528             10648484.0    26.262646   37.4164           9728951.0        192.420893       5.106788             1.327860e+06
+ NaN     v2                128  224821         100      224821      1030386      255508       28.093225      34.9783              9095004.0    30.302568   32.4280           8431892.0        196.460815       5.001774             1.300555e+06
+ NaN     v2                256  224821         100      224821      1030386      255508       46.253014      21.2452              5524137.5    48.525463   20.2502           5265441.5        214.683710       4.577211             1.190160e+06
