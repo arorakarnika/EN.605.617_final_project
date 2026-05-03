@@ -143,14 +143,35 @@ def normalize_columns(df):
     return df
 
 
+def add_pipeline_columns(df, baselines):
+    """Combine GPU end-to-end time with Python regex pre-split time so the
+    GPU side measures the same work as tiktoken.encode(): regex split + BPE
+    + transfers. The result is the truly apples-to-apples pipeline number."""
+    df = df.copy()
+    regex_ms = baselines["regex_only"]["avg_time_ms"]
+    df["pipeline_time_ms"] = df["e2e_time_ms"] + regex_ms
+    pipeline_sec = df["pipeline_time_ms"] / 1000.0
+    df["pipeline_mbps"] = (df["input_bytes"] / (1024.0 * 1024.0)) / pipeline_sec
+    df["pipeline_tokens_per_sec"] = df["num_tokens"] / pipeline_sec
+    return df
+
+
 def plot_throughput_vs_threads(df, baselines, output_path):
     fig, (ax_mbps, ax_tps) = plt.subplots(1, 2, figsize=(14, 5))
 
     style = {
-        ("v1", "kernel"): {"color": "#3498db", "linestyle": "-",  "label": "GPU V1 kernel"},
-        ("v1", "e2e"):    {"color": "#3498db", "linestyle": "--", "label": "GPU V1 end-to-end"},
-        ("v2", "kernel"): {"color": "#e74c3c", "linestyle": "-",  "label": "GPU V2 kernel"},
-        ("v2", "e2e"):    {"color": "#e74c3c", "linestyle": "--", "label": "GPU V2 end-to-end"},
+        ("v1", "kernel"):   {"color": "#3498db", "linestyle": "-",  "linewidth": 2.0, "alpha": 1.0,
+                             "label": "GPU V1 kernel only"},
+        ("v1", "e2e"):      {"color": "#3498db", "linestyle": "--", "linewidth": 2.0, "alpha": 0.85,
+                             "label": "GPU V1 end-to-end (transfers)"},
+        ("v1", "pipeline"): {"color": "#3498db", "linestyle": ":",  "linewidth": 2.5, "alpha": 0.65,
+                             "label": "GPU V1 pipeline (+ Python regex)"},
+        ("v2", "kernel"):   {"color": "#e74c3c", "linestyle": "-",  "linewidth": 2.0, "alpha": 1.0,
+                             "label": "GPU V2 kernel only"},
+        ("v2", "e2e"):      {"color": "#e74c3c", "linestyle": "--", "linewidth": 2.0, "alpha": 0.85,
+                             "label": "GPU V2 end-to-end (transfers)"},
+        ("v2", "pipeline"): {"color": "#e74c3c", "linestyle": ":",  "linewidth": 2.5, "alpha": 0.65,
+                             "label": "GPU V2 pipeline (+ Python regex)"},
     }
 
     for kernel in ("v1", "v2"):
@@ -160,18 +181,17 @@ def plot_throughput_vs_threads(df, baselines, output_path):
         for which, mbps_col, tps_col in [
             ("kernel", "kernel_mbps", "kernel_tokens_per_sec"),
             ("e2e", "e2e_mbps", "e2e_tokens_per_sec"),
+            ("pipeline", "pipeline_mbps", "pipeline_tokens_per_sec"),
         ]:
-            if sub[mbps_col].isna().all():
+            if mbps_col not in sub.columns or sub[mbps_col].isna().all():
                 continue
             s = style[(kernel, which)]
-            ax_mbps.plot(sub["threads_per_block"], sub[mbps_col],
-                         marker="o", linewidth=2, **s)
-            ax_tps.plot(sub["threads_per_block"], sub[tps_col],
-                        marker="o", linewidth=2, **s)
+            ax_mbps.plot(sub["threads_per_block"], sub[mbps_col], marker="o", **s)
+            ax_tps.plot(sub["threads_per_block"], sub[tps_col], marker="o", **s)
 
     for name, info in [
-        ("encode_full",    {"color": "#555555", "linestyle": ":"}),
-        ("per_piece_loop", {"color": "#888888", "linestyle": ":"}),
+        ("encode_full",    {"color": "#222222", "linestyle": "-.", "linewidth": 1.5}),
+        ("per_piece_loop", {"color": "#777777", "linestyle": "-.", "linewidth": 1.5}),
     ]:
         b = baselines.get(name)
         if not b:
@@ -184,7 +204,7 @@ def plot_throughput_vs_threads(df, baselines, output_path):
     for ax in (ax_mbps, ax_tps):
         ax.set_xscale("log", base=2)
         ax.set_xlabel("Threads per block")
-        ax.legend(fontsize=8)
+        ax.legend(fontsize=7, loc="best")
     ax_mbps.set_ylabel("Throughput (MB/s)")
     ax_tps.set_ylabel("Throughput (tokens/sec)")
     ax_mbps.set_title("BPE encode throughput - MB/s")
@@ -196,6 +216,23 @@ def plot_throughput_vs_threads(df, baselines, output_path):
     print("Saved {}".format(output_path))
 
 
+def _bar_panel(ax, df, values, baseline_mbps, baseline_label, title, colors):
+    bars = ax.bar(df["label"], values, color=colors, alpha=0.85)
+    ax.axhline(1.0, color="gray", linestyle="--",
+               label="{} ({:.1f} MB/s)".format(baseline_label, baseline_mbps))
+    for bar, val in zip(bars, values):
+        if pd.isna(val):
+            continue
+        ax.text(bar.get_x() + bar.get_width() / 2, val,
+                "{:.1f}x".format(val), ha="center", va="bottom", fontsize=8)
+    ax.set_ylabel("Speedup (MB/s ratio)")
+    ax.set_title(title)
+    ax.legend(fontsize=8)
+    ax.tick_params(axis="x", rotation=30)
+    for label in ax.get_xticklabels():
+        label.set_horizontalalignment("right")
+
+
 def plot_speedup_panels(df, baselines, output_path):
     df = df.copy()
     df["label"] = df.apply(
@@ -205,43 +242,35 @@ def plot_speedup_panels(df, baselines, output_path):
     df = df.sort_values(["kernel", "threads_per_block"]).reset_index(drop=True)
     colors = ["#3498db" if k == "v1" else "#e74c3c" for k in df["kernel"]]
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 5))
 
     per_piece_mbps = baselines["per_piece_loop"]["mbps"]
-    speedup_kernel = df["kernel_mbps"] / per_piece_mbps
-    bars = ax1.bar(df["label"], speedup_kernel, color=colors, alpha=0.85)
-    ax1.axhline(1.0, color="gray", linestyle="--",
-                label="tiktoken per-piece loop ({:.1f} MB/s)".format(per_piece_mbps))
-    for bar, val in zip(bars, speedup_kernel):
-        ax1.text(bar.get_x() + bar.get_width() / 2, val,
-                 "{:.1f}x".format(val), ha="center", va="bottom", fontsize=8)
-    ax1.set_ylabel("Speedup (MB/s ratio)")
-    ax1.set_title("GPU kernel-only vs tiktoken per-piece loop\n(BPE merge algorithm only)")
-    ax1.legend(fontsize=8)
-    ax1.tick_params(axis="x", rotation=30)
-    for label in ax1.get_xticklabels():
-        label.set_horizontalalignment("right")
+    encode_mbps = baselines["encode_full"]["mbps"]
 
-    if df["e2e_mbps"].notna().any():
-        encode_mbps = baselines["encode_full"]["mbps"]
-        speedup_e2e = df["e2e_mbps"] / encode_mbps
-        bars2 = ax2.bar(df["label"], speedup_e2e, color=colors, alpha=0.85)
-        ax2.axhline(1.0, color="gray", linestyle="--",
-                    label="tiktoken encode() ({:.1f} MB/s)".format(encode_mbps))
-        for bar, val in zip(bars2, speedup_e2e):
-            ax2.text(bar.get_x() + bar.get_width() / 2, val,
-                     "{:.1f}x".format(val), ha="center", va="bottom", fontsize=8)
-        ax2.set_ylabel("Speedup (MB/s ratio)")
-        ax2.set_title("GPU end-to-end vs tiktoken encode()\n(realistic pipeline comparison)")
-        ax2.legend(fontsize=8)
-        ax2.tick_params(axis="x", rotation=30)
-        for label in ax2.get_xticklabels():
-            label.set_horizontalalignment("right")
+    _bar_panel(ax1, df, df["kernel_mbps"] / per_piece_mbps,
+               per_piece_mbps, "tiktoken per-piece loop",
+               "GPU kernel-only vs tiktoken per-piece loop\n(BPE merge algorithm only - excludes regex on both sides)",
+               colors)
+
+    if "e2e_mbps" in df.columns and df["e2e_mbps"].notna().any():
+        _bar_panel(ax2, df, df["e2e_mbps"] / encode_mbps,
+                   encode_mbps, "tiktoken encode()",
+                   "GPU end-to-end vs tiktoken encode()\n(GPU side excludes Python regex pre-split)",
+                   colors)
     else:
-        ax2.text(0.5, 0.5,
-                 "No e2e timing in CSV\n(rerun the sweep with the new binary)",
-                 ha="center", va="center", transform=ax2.transAxes, fontsize=11)
+        ax2.text(0.5, 0.5, "No e2e timing in CSV", ha="center", va="center",
+                 transform=ax2.transAxes, fontsize=11)
         ax2.set_axis_off()
+
+    if "pipeline_mbps" in df.columns and df["pipeline_mbps"].notna().any():
+        _bar_panel(ax3, df, df["pipeline_mbps"] / encode_mbps,
+                   encode_mbps, "tiktoken encode()",
+                   "GPU pipeline (e2e + Python regex) vs tiktoken encode()\n(apples-to-apples: both include regex + BPE + transfers)",
+                   colors)
+    else:
+        ax3.text(0.5, 0.5, "No pipeline timing\n(needs e2e timing + regex baseline)",
+                 ha="center", va="center", transform=ax3.transAxes, fontsize=11)
+        ax3.set_axis_off()
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
@@ -269,6 +298,7 @@ def write_report(df, baselines, output_path):
 
     per_piece_mbps = baselines["per_piece_loop"]["mbps"]
     encode_mbps = baselines["encode_full"]["mbps"]
+    regex_ms = baselines["regex_only"]["avg_time_ms"]
 
     def best(df, col):
         if col not in df.columns or df[col].isna().all():
@@ -281,25 +311,44 @@ def write_report(df, baselines, output_path):
             continue
         kbest = best(sub, "kernel_mbps")
         ebest = best(sub, "e2e_mbps")
+        pbest = best(sub, "pipeline_mbps")
+        lines.append("=== Best {} configurations ===".format(kernel.upper()))
         if kbest is not None:
-            lines.append("Best {} kernel-only: threads={} blocks={}".format(
-                kernel.upper(), int(kbest["threads_per_block"]), int(kbest["blocks"])))
-            lines.append("  time={:.3f} ms  mbps={:.2f}  tok/s={:.0f}".format(
+            lines.append("Kernel-only (BPE merge work, excludes regex on both sides):")
+            lines.append("  threads={} blocks={}  time={:.3f} ms  mbps={:.2f}  tok/s={:.0f}".format(
+                int(kbest["threads_per_block"]), int(kbest["blocks"]),
                 kbest["kernel_time_ms"], kbest["kernel_mbps"], kbest["kernel_tokens_per_sec"]))
-            lines.append("  speedup vs per-piece loop: {:.2f}x  (BPE-merge-only comparison)".format(
+            lines.append("  speedup vs tiktoken per_piece_loop: {:.2f}x".format(
                 kbest["kernel_mbps"] / per_piece_mbps))
         if ebest is not None and not pd.isna(ebest["e2e_mbps"]):
-            lines.append("Best {} end-to-end: threads={} blocks={}".format(
-                kernel.upper(), int(ebest["threads_per_block"]), int(ebest["blocks"])))
-            lines.append("  time={:.3f} ms  mbps={:.2f}  tok/s={:.0f}".format(
+            lines.append("End-to-end (kernel + transfers, GPU regex amortized off-clock):")
+            lines.append("  threads={} blocks={}  time={:.3f} ms  mbps={:.2f}  tok/s={:.0f}".format(
+                int(ebest["threads_per_block"]), int(ebest["blocks"]),
                 ebest["e2e_time_ms"], ebest["e2e_mbps"], ebest["e2e_tokens_per_sec"]))
-            lines.append("  speedup vs encode():       {:.2f}x  (pipeline comparison)".format(
+            lines.append("  speedup vs tiktoken encode():       {:.2f}x  (favors GPU - regex excluded)".format(
                 ebest["e2e_mbps"] / encode_mbps))
+        if pbest is not None and not pd.isna(pbest["pipeline_mbps"]):
+            lines.append("Pipeline (apples-to-apples: e2e + Python regex pre-split):")
+            lines.append("  threads={} blocks={}  time={:.3f} ms  ({:.3f} regex + {:.3f} e2e)".format(
+                int(pbest["threads_per_block"]), int(pbest["blocks"]),
+                pbest["pipeline_time_ms"], regex_ms, pbest["e2e_time_ms"]))
+            lines.append("  mbps={:.2f}  tok/s={:.0f}".format(
+                pbest["pipeline_mbps"], pbest["pipeline_tokens_per_sec"]))
+            lines.append("  speedup vs tiktoken encode():       {:.2f}x  <-- truly fair number".format(
+                pbest["pipeline_mbps"] / encode_mbps))
         lines.append("")
 
-    lines.append("Note: GPU end-to-end excludes the Python regex pre-split, which")
-    lines.append("tiktoken.encode() does internally in Rust. Python regex_only timing")
-    lines.append("above lets you mentally combine: realistic pipeline = e2e + regex_only.")
+    lines.append("How to read these speedups:")
+    lines.append("  - kernel-only vs per_piece_loop: how much faster the GPU's BPE merge")
+    lines.append("    code is than tiktoken's Rust BPE core (both fed pre-split pieces).")
+    lines.append("  - end-to-end vs encode(): how much faster a tokenizer service backed")
+    lines.append("    by this kernel is, ASSUMING the regex pre-split is amortized")
+    lines.append("    (cached, batched, or moved off the critical path).")
+    lines.append("  - pipeline vs encode(): the truly apples-to-apples number. Includes")
+    lines.append("    Python regex on the GPU side, matching tiktoken.encode()'s internal")
+    lines.append("    Rust regex + BPE. Smaller speedup because Python regex is now the")
+    lines.append("    new bottleneck - replacing it with PCRE2 in C++ would unlock the")
+    lines.append("    full kernel-only speedup.")
     lines.append("")
     lines.append("All configurations:")
     lines.append(df.to_string(index=False))
@@ -349,6 +398,8 @@ def main():
         else:
             print("  {:<16s}: {:7.3f} ms  ->  {:6.2f} MB/s".format(
                 name, b["avg_time_ms"], b["mbps"]))
+
+    df = add_pipeline_columns(df, baselines)
 
     plot_throughput_vs_threads(df, baselines, "throughput_vs_threads.png")
     plot_speedup_panels(df, baselines, "speedup_vs_tiktoken.png")
