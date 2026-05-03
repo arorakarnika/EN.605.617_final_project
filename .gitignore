@@ -21,3 +21,11 @@ benchmark_results.csv
 # Build artifacts
 *.ptx
 *.cubin
+
+# Python / uv
+.venv/
+__pycache__/
+*.pyc
+
+# Visualization artifacts
+*.png
