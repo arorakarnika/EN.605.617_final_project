@@ -1,29 +1,38 @@
 BPE Benchmark Report
-============================================================
+======================================================================
 
-tiktoken baseline (Python):
-  avg time    : 8.962 ms
-  throughput  : 10.68 MB/s
-  tokens/sec  : 2847595
-  num tokens  : 25521
+Tiktoken baselines (Python, measured on this run):
+  encode_full     :  12.937 ms  ->    7.40 MB/s  (1972780 tok/s)
+  per_piece_loop  :   8.492 ms  ->   11.27 MB/s  (3005209 tok/s)
+  regex_only      :  16.276 ms  ->    5.88 MB/s
 
-Best V1 config: threads=64 blocks=351
-  time=1.261 ms  mbps=75.87  tok/s=20231624
-  speedup vs tiktoken (MB/s): 7.10x
+Best V1 kernel-only: threads=64 blocks=351
+  time=1.261 ms  mbps=75.90  tok/s=20239176
+  speedup vs per-piece loop: 6.73x  (BPE-merge-only comparison)
+Best V1 end-to-end: threads=64 blocks=351
+  time=1.531 ms  mbps=62.51  tok/s=16668142
+  speedup vs encode():       8.45x  (pipeline comparison)
 
-Best V2 config: threads=64 blocks=22443
-  time=2.416 ms  mbps=39.62  tok/s=10563816
-  speedup vs tiktoken (MB/s): 3.71x
+Best V2 kernel-only: threads=64 blocks=22443
+  time=2.415 ms  mbps=39.62  tok/s=10566278
+  speedup vs per-piece loop: 3.52x  (BPE-merge-only comparison)
+Best V2 end-to-end: threads=64 blocks=22443
+  time=2.701 ms  mbps=35.44  tok/s=9449932
+  speedup vs encode():       4.79x  (pipeline comparison)
+
+Note: GPU end-to-end excludes the Python regex pre-split, which
+tiktoken.encode() does internally in Rust. Python regex_only timing
+above lets you mentally combine: realistic pipeline = e2e + regex_only.
 
 All configurations:
- tag kernel  threads_per_block  blocks  iterations  num_pieces  input_bytes  num_tokens  avg_time_ms    mbps  tokens_per_sec
- NaN     v1                 32     702         100       22443       100355       25521     1.301419 73.5397      19610136.0
- NaN     v1                 64     351         100       22443       100355       25521     1.261441 75.8704      20231624.0
- NaN     v1                128     176         100       22443       100355       25521     1.266389 75.5739      20152574.0
- NaN     v1                256      88         100       22443       100355       25521     1.293930 73.9654      19723640.0
- NaN     v1                512      44         100       22443       100355       25521     1.268166 75.4680      20124336.0
- NaN     v1               1024      22         100       22443       100355       25521     1.355019 70.6307      18834420.0
- NaN     v2                 32   22443         100       22443       100355       25521     2.485495 38.5058      10267975.0
- NaN     v2                 64   22443         100       22443       100355       25521     2.415888 39.6152      10563816.0
- NaN     v2                128   22443         100       22443       100355       25521     2.810997 34.0470       9078985.0
- NaN     v2                256   22443         100       22443       100355       25521     4.542798 21.0676       5617903.0
+ tag kernel  threads_per_block  blocks  iterations  num_pieces  input_bytes  num_tokens  kernel_time_ms  kernel_mbps  kernel_tokens_per_sec  e2e_time_ms  e2e_mbps  e2e_tokens_per_sec
+ NaN     v1                 32     702         100       22443       100355       25521        1.301623      73.5282             19607058.0     1.561735   61.2818          16341443.0
+ NaN     v1                 64     351         100       22443       100355       25521        1.260970      75.8987             20239176.0     1.531124   62.5070          16668142.0
+ NaN     v1                128     176         100       22443       100355       25521        1.267197      75.5258             20139734.0     1.535246   62.3392          16623399.0
+ NaN     v1                256      88         100       22443       100355       25521        1.292122      74.0688             19751222.0     1.565306   61.1420          16304161.0
+ NaN     v1                512      44         100       22443       100355       25521        1.271639      75.2619             20069378.0     1.542547   62.0441          16544713.0
+ NaN     v1               1024      22         100       22443       100355       25521        1.355223      70.6201             18831588.0     1.627313   58.8123          15682904.0
+ NaN     v2                 32   22443         100       22443       100355       25521        2.486894      38.4841             10262198.0     2.757878   34.7028           9253855.0
+ NaN     v2                 64   22443         100       22443       100355       25521        2.415325      39.6245             10566278.0     2.700654   35.4381           9449932.0
+ NaN     v2                128   22443         100       22443       100355       25521        2.811290      34.0434              9078039.0     3.098008   30.8927           8237873.5
+ NaN     v2                256   22443         100       22443       100355       25521        4.543095      21.0663              5617537.0     4.820860   19.8525           5293868.0
