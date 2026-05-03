@@ -887,9 +887,12 @@ static void append_bpe_csv_row(const char* path,
                                int num_pieces,
                                int input_bytes,
                                int num_tokens,
-                               float avg_time_ms,
-                               float gpu_mbps,
-                               float tokens_per_sec) {
+                               float kernel_time_ms,
+                               float kernel_mbps,
+                               float kernel_tokens_per_sec,
+                               float e2e_time_ms,
+                               float e2e_mbps,
+                               float e2e_tokens_per_sec) {
     FILE* check = fopen(path, "rb");
     int needs_header = 1;
     if (check) {
@@ -904,13 +907,18 @@ static void append_bpe_csv_row(const char* path,
         return;
     }
     if (needs_header) {
+        // kernel_*: kernel-only time (warm buffers already on device)
+        // e2e_*:    H2D pieces + kernel + D2H tokens per iteration; the one-
+        //           time ranks-table copy is still amortized, matching how a
+        //           real long-running tokenizer service would be deployed.
         fprintf(fp,
                 "tag,kernel,threads_per_block,blocks,iterations,"
                 "num_pieces,input_bytes,num_tokens,"
-                "avg_time_ms,mbps,tokens_per_sec\n");
+                "kernel_time_ms,kernel_mbps,kernel_tokens_per_sec,"
+                "e2e_time_ms,e2e_mbps,e2e_tokens_per_sec\n");
     }
     fprintf(fp,
-            "%s,v%d,%d,%d,%d,%d,%d,%d,%.6f,%.4f,%.2f\n",
+            "%s,v%d,%d,%d,%d,%d,%d,%d,%.6f,%.4f,%.2f,%.6f,%.4f,%.2f\n",
             tag ? tag : "",
             kernel_version,
             threads_per_block,
@@ -919,9 +927,12 @@ static void append_bpe_csv_row(const char* path,
             num_pieces,
             input_bytes,
             num_tokens,
-            avg_time_ms,
-            gpu_mbps,
-            tokens_per_sec);
+            kernel_time_ms,
+            kernel_mbps,
+            kernel_tokens_per_sec,
+            e2e_time_ms,
+            e2e_mbps,
+            e2e_tokens_per_sec);
     fclose(fp);
     printf("Appended CSV row to %s\n", path);
 }
@@ -1032,6 +1043,8 @@ void run_bpe_benchmark(const Pieces* pieces,
     CHECK_CUDA(cudaGetLastError());
     CHECK_CUDA(cudaDeviceSynchronize());
 
+    // Pass 1: kernel-only timing. Inputs already on device, outputs stay on
+    // device. This is what the simple-vocab benchmark also measures.
     CHECK_CUDA(cudaEventRecord(start));
     for (int it = 0; it < iterations; it++) {
         if (config->kernel_version == 2) {
@@ -1051,26 +1064,76 @@ void run_bpe_benchmark(const Pieces* pieces,
     CHECK_CUDA(cudaEventRecord(stop));
     CHECK_CUDA(cudaEventSynchronize(stop));
 
-    float total_ms = 0.0f;
-    CHECK_CUDA(cudaEventElapsedTime(&total_ms, start, stop));
+    float kernel_total_ms = 0.0f;
+    CHECK_CUDA(cudaEventElapsedTime(&kernel_total_ms, start, stop));
 
     int* h_token_counts = (int*)malloc(num_pieces * sizeof(int));
     int* h_token_ids = (int*)malloc(max_total_tokens * sizeof(int));
-    CHECK_CUDA(cudaMemcpy(h_token_counts, d_token_counts,
-                          num_pieces * sizeof(int), cudaMemcpyDeviceToHost));
-    CHECK_CUDA(cudaMemcpy(h_token_ids, d_token_ids,
-                          max_total_tokens * sizeof(int), cudaMemcpyDeviceToHost));
+
+    // Pass 2: end-to-end per-call timing. Each iteration re-uploads the
+    // pieces, runs the kernel, and copies the resulting token IDs and
+    // counts back to the host. The 13.6 MB ranks table is intentionally
+    // NOT re-uploaded here: in any realistic deployment that table is
+    // loaded once and reused across many requests.
+    cudaEvent_t e2e_start, e2e_stop;
+    CHECK_CUDA(cudaEventCreate(&e2e_start));
+    CHECK_CUDA(cudaEventCreate(&e2e_stop));
+    CHECK_CUDA(cudaEventRecord(e2e_start));
+    for (int it = 0; it < iterations; it++) {
+        CHECK_CUDA(cudaMemcpyAsync(d_blob, pieces->blob, pieces->total_bytes,
+                                   cudaMemcpyHostToDevice));
+        CHECK_CUDA(cudaMemcpyAsync(d_offsets, pieces->offsets,
+                                   num_pieces * sizeof(int),
+                                   cudaMemcpyHostToDevice));
+        CHECK_CUDA(cudaMemcpyAsync(d_lengths, pieces->lengths,
+                                   num_pieces * sizeof(int),
+                                   cudaMemcpyHostToDevice));
+        if (config->kernel_version == 2) {
+            bpe_encode_kernel_v2<<<blocks, threads>>>(
+                d_blob, d_offsets, d_lengths, num_pieces,
+                d_ranks, num_ranks,
+                d_token_ids, d_token_offsets, d_token_counts);
+        } else {
+            bpe_encode_kernel_v1<<<blocks, threads>>>(
+                d_blob, d_offsets, d_lengths, num_pieces,
+                d_ranks, num_ranks,
+                d_token_ids, d_token_offsets, d_token_counts,
+                BPE_MAX_TOKENS_PER_PIECE);
+        }
+        CHECK_CUDA(cudaMemcpyAsync(h_token_counts, d_token_counts,
+                                   num_pieces * sizeof(int),
+                                   cudaMemcpyDeviceToHost));
+        CHECK_CUDA(cudaMemcpyAsync(h_token_ids, d_token_ids,
+                                   max_total_tokens * sizeof(int),
+                                   cudaMemcpyDeviceToHost));
+    }
+    CHECK_CUDA(cudaGetLastError());
+    CHECK_CUDA(cudaEventRecord(e2e_stop));
+    CHECK_CUDA(cudaEventSynchronize(e2e_stop));
+
+    float e2e_total_ms = 0.0f;
+    CHECK_CUDA(cudaEventElapsedTime(&e2e_total_ms, e2e_start, e2e_stop));
 
     int total_tokens = 0;
     for (int i = 0; i < num_pieces; i++) total_tokens += h_token_counts[i];
 
+    float kernel_ms = kernel_total_ms / iterations;
+    float e2e_ms = e2e_total_ms / iterations;
+    float kernel_sec = kernel_ms / 1000.0f;
+    float e2e_sec = e2e_ms / 1000.0f;
+    float input_mb = pieces->total_bytes / (1024.0f * 1024.0f);
+
+    float kernel_mbps = input_mb / kernel_sec;
+    float kernel_tps = total_tokens / kernel_sec;
+    float e2e_mbps = input_mb / e2e_sec;
+    float e2e_tps = total_tokens / e2e_sec;
+
     result->num_tokens = total_tokens;
     result->text_bytes = (size_t)pieces->total_bytes;
-    result->gpu_time_ms = total_ms / iterations;
+    result->gpu_time_ms = kernel_ms;
     result->cpu_time_ms = 0.0f;
-    float gpu_sec = result->gpu_time_ms / 1000.0f;
-    result->gpu_throughput_tokens_per_sec = total_tokens / gpu_sec;
-    result->gpu_throughput_mbps = (pieces->total_bytes / (1024.0f * 1024.0f)) / gpu_sec;
+    result->gpu_throughput_tokens_per_sec = kernel_tps;
+    result->gpu_throughput_mbps = kernel_mbps;
     result->cpu_throughput_tokens_per_sec = 0.0f;
     result->cpu_throughput_mbps = 0.0f;
     result->speedup = 0.0f;
@@ -1081,10 +1144,10 @@ void run_bpe_benchmark(const Pieces* pieces,
     printf("  Pieces:        %d\n", num_pieces);
     printf("  Input bytes:   %d\n", pieces->total_bytes);
     printf("  Tokens:        %d\n", total_tokens);
-    printf("  Avg time:      %.3f ms\n", result->gpu_time_ms);
-    printf("  Throughput:    %.2f MB/s, %.0f tokens/sec\n",
-           result->gpu_throughput_mbps,
-           result->gpu_throughput_tokens_per_sec);
+    printf("  Kernel only:   %.3f ms  (%.2f MB/s, %.0f tok/s)\n",
+           kernel_ms, kernel_mbps, kernel_tps);
+    printf("  End-to-end:    %.3f ms  (%.2f MB/s, %.0f tok/s)  [H2D+kernel+D2H per call]\n",
+           e2e_ms, e2e_mbps, e2e_tps);
 
     if (config->output_path) {
         write_token_output(config->output_path, h_token_ids,
@@ -1101,9 +1164,12 @@ void run_bpe_benchmark(const Pieces* pieces,
                            num_pieces,
                            pieces->total_bytes,
                            total_tokens,
-                           result->gpu_time_ms,
-                           result->gpu_throughput_mbps,
-                           result->gpu_throughput_tokens_per_sec);
+                           kernel_ms,
+                           kernel_mbps,
+                           kernel_tps,
+                           e2e_ms,
+                           e2e_mbps,
+                           e2e_tps);
     }
 
     free(h_token_counts);
@@ -1112,6 +1178,8 @@ void run_bpe_benchmark(const Pieces* pieces,
 
     CHECK_CUDA(cudaEventDestroy(start));
     CHECK_CUDA(cudaEventDestroy(stop));
+    CHECK_CUDA(cudaEventDestroy(e2e_start));
+    CHECK_CUDA(cudaEventDestroy(e2e_stop));
     CHECK_CUDA(cudaFree(d_blob));
     CHECK_CUDA(cudaFree(d_offsets));
     CHECK_CUDA(cudaFree(d_lengths));
