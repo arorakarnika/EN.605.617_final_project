@@ -3,22 +3,7 @@
 *.o
 *.out
 
-# Data files
-data/*.csv
-data/*.txt
-data/*.bin
-
-# Benchmark results
-benchmark_results.csv
-*.csv
-
-# Editor files
-*.swp
-*.swo
-*~
-.DS_Store
-
-# Build artifacts
+# CUDA artifacts
 *.ptx
 *.cubin
 
@@ -27,5 +12,19 @@ benchmark_results.csv
 __pycache__/
 *.pyc
 
+# Test data: corpora, pre-split pieces, GPU token dumps. These are large
+# and easily regenerated via src/fetch_corpus.py + src/export_tiktoken_vocab.py.
+data/corpus*.txt
+data/sample_text.txt
+data/pieces.bin
+data/bpe_ranks.bin
+data/gpu_tokens.bin
 
+# Editor / OS
+*.swp
+*.swo
+*~
+.DS_Store
 
+# Note: PNG plots, bpe_report.txt, and data/bpe_benchmark.csv are
+# intentionally NOT ignored - they are the published benchmark artifacts.
