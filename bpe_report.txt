@@ -1,0 +1,29 @@
+BPE Benchmark Report
+============================================================
+
+tiktoken baseline (Python):
+  avg time    : 8.962 ms
+  throughput  : 10.68 MB/s
+  tokens/sec  : 2847595
+  num tokens  : 25521
+
+Best V1 config: threads=64 blocks=351
+  time=1.261 ms  mbps=75.87  tok/s=20231624
+  speedup vs tiktoken (MB/s): 7.10x
+
+Best V2 config: threads=64 blocks=22443
+  time=2.416 ms  mbps=39.62  tok/s=10563816
+  speedup vs tiktoken (MB/s): 3.71x
+
+All configurations:
+ tag kernel  threads_per_block  blocks  iterations  num_pieces  input_bytes  num_tokens  avg_time_ms    mbps  tokens_per_sec
+ NaN     v1                 32     702         100       22443       100355       25521     1.301419 73.5397      19610136.0
+ NaN     v1                 64     351         100       22443       100355       25521     1.261441 75.8704      20231624.0
+ NaN     v1                128     176         100       22443       100355       25521     1.266389 75.5739      20152574.0
+ NaN     v1                256      88         100       22443       100355       25521     1.293930 73.9654      19723640.0
+ NaN     v1                512      44         100       22443       100355       25521     1.268166 75.4680      20124336.0
+ NaN     v1               1024      22         100       22443       100355       25521     1.355019 70.6307      18834420.0
+ NaN     v2                 32   22443         100       22443       100355       25521     2.485495 38.5058      10267975.0
+ NaN     v2                 64   22443         100       22443       100355       25521     2.415888 39.6152      10563816.0
+ NaN     v2                128   22443         100       22443       100355       25521     2.810997 34.0470       9078985.0
+ NaN     v2                256   22443         100       22443       100355       25521     4.542798 21.0676       5617903.0

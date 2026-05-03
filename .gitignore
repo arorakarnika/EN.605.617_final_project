@@ -27,5 +27,5 @@ benchmark_results.csv
 __pycache__/
 *.pyc
 
-# Visualization artifacts
-*.png
+
+
