@@ -1,0 +1,13 @@
+[project]
+name = "en-605-617-final-project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "matplotlib>=3.10.9",
+    "pandas>=3.0.2",
+    "regex>=2026.4.4",
+    "seaborn>=0.13.2",
+    "tiktoken>=0.12.0",
+]

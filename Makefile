@@ -1,19 +1,24 @@
 NVCC = nvcc
 CFLAGS = -O2 -arch=sm_75 --ptxas-options=-v -Iinclude
-TARGET = vocab_lookup.exe
+TARGET = bpe_tokenizer.exe
 
 SRC_DIR = src
 INCLUDE_DIR = include
-DATA_DIR = data
 
-SOURCES = $(SRC_DIR)/vocab_lookup.cu
+SOURCES = \
+	$(SRC_DIR)/main.cu \
+	$(SRC_DIR)/bpe_kernels.cu \
+	$(SRC_DIR)/bpe_io.cu \
+	$(SRC_DIR)/bpe_benchmark.cu
+
+HEADERS = $(INCLUDE_DIR)/bpe.h
 
 all: $(TARGET)
 
-$(TARGET): $(SOURCES)
+$(TARGET): $(SOURCES) $(HEADERS)
 	$(NVCC) $(CFLAGS) -o $(TARGET) $(SOURCES)
 
 clean:
-	rm -f $(TARGET) benchmark_results.csv $(DATA_DIR)/sample_vocab.bin
+	rm -f $(TARGET)
 
 .PHONY: all clean

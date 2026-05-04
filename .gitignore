@@ -3,21 +3,25 @@
 *.o
 *.out
 
-# Data files
-data/*.csv
-data/*.txt
-data/*.bin
+# CUDA artifacts
+*.ptx
+*.cubin
 
-# Benchmark results
-benchmark_results.csv
-*.csv
+# Python / uv
+.venv/
+__pycache__/
+*.pyc
 
-# Editor files
+# Test data: corpora, pre-split pieces, GPU token dumps. These are large
+# and easily regenerated via src/fetch_corpus.py + src/export_tiktoken_vocab.py.
+data/corpus*.txt
+data/sample_text.txt
+data/pieces.bin
+data/bpe_ranks.bin
+data/gpu_tokens.bin
+
+# Editor / OS
 *.swp
 *.swo
 *~
 .DS_Store
-
-# Build artifacts
-*.ptx
-*.cubin
