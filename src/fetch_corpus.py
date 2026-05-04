@@ -6,11 +6,6 @@ clear separators, then write the full text plus truncated copies at large
 byte sizes (defaults start at 1 MiB for GPU-meaningful runs).
 
 Single-book mode: pass --book <key> to fetch only one title.
-
-Outputs (default --output data/corpus.txt, default --sizes):
-    data/corpus.txt           full combined cleaned text
-    data/corpus_1MB.txt       first 1048576 bytes (if default sizes include 1MB)
-    ...                       other truncations per --sizes
 """
 
 import argparse

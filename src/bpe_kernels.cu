@@ -16,9 +16,8 @@
 #include <limits.h>
 #include "bpe.h"
 
-// ---------------------------------------------------------------------------
-// Device helpers
-// ---------------------------------------------------------------------------
+
+// Device helpers --------------------------------------------------
 
 __device__ __forceinline__ int bpe_bytes_compare(const unsigned char* a, int a_len,
                                                  const unsigned char* b, int b_len) {
@@ -31,9 +30,8 @@ __device__ __forceinline__ int bpe_bytes_compare(const unsigned char* a, int a_l
 }
 
 // Binary search for the rank of a byte span. Returns the rank if found,
-// otherwise INT_MAX (signalling "no merge possible for this pair"). We
-// return INT_MAX rather than -1 so reductions can treat it as "infinitely
-// bad" without an extra branch.
+// otherwise INT_MAX. We return INT_MAX rather than -1 so reductions can 
+// treat it as "infinitely bad" without an extra branch.
 __device__ int bpe_lookup_rank(const unsigned char* query, int query_len,
                                const BPERank* ranks, int num_ranks) {
     int lo = 0;
@@ -49,9 +47,7 @@ __device__ int bpe_lookup_rank(const unsigned char* query, int query_len,
     return INT_MAX;
 }
 
-// ---------------------------------------------------------------------------
-// V1: one thread per piece. Sequential BPE inside each thread.
-// ---------------------------------------------------------------------------
+// V1: one thread per piece. Sequential BPE inside each thread. ------------------
 
 __global__ void bpe_encode_kernel_v1(const unsigned char* blob,
                                      const int* piece_offsets,
@@ -128,19 +124,13 @@ __global__ void bpe_encode_kernel_v1(const unsigned char* blob,
     out_token_counts[tid] = count;
 }
 
-// ---------------------------------------------------------------------------
-// V2: one block per piece. Parallel pair scoring + reduction.
-// ---------------------------------------------------------------------------
-//
-// Each thread is responsible for one source position in the piece. Per
-// round it computes the rank of the pair starting at its position (or
-// INT_MAX if its position is no longer active), then a tree-reduction
-// across the block selects the leftmost lowest-rank pair. Thread 0 applies
-// that single merge and the loop repeats.
-//
-// We pack (rank, position) into one 64-bit value during the reduction so
-// the standard min() does both "lowest rank wins" and "leftmost ties win"
-// for free.
+// V2: one block per piece. Parallel pair scoring + reduction. --------------------------------------------------
+// Each thread is responsible for one source position in the piece. 
+// Per round it computes the rank of the pair starting at its position (or INT_MAX if its position is no longer active), 
+// then a tree-reduction across the block selects the leftmost lowest-rank pair. 
+// Thread 0 applies that single merge and the loop repeats.
+// We pack (rank, position) into one 64-bit value during the reduction so 
+// the standard min() does both "lowest rank wins" and "leftmost ties win" for free.
 
 __global__ void bpe_encode_kernel_v2(const unsigned char* blob,
                                      const int* piece_offsets,

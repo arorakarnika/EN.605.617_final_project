@@ -176,7 +176,7 @@ Baseline summary (under each `[tag]` heading):
 | Column | Meaning |
 |--------|--------|
 | **encode_full** | One `tiktoken` `encode_ordinary(text)` call: Rust regex split + BPE. Time (ms) and throughput (MB/s) for the full input bytes. |
-| **per_piece** | Python loop over pieces calling `_encode_single_piece` each time. Same BPE work as the GPU kernel input; time and MB/s. |
+| **per_piece** | Python loop over pieces calling `_encode_single_piece` each time. Same BPE work as the GPU kernel input, time and MB/s. |
 | **regex** | Python `regex.finditer` only (splitting cost). Used with GPU e2e to build **pipeline** time. |
 
 GPU table columns:
