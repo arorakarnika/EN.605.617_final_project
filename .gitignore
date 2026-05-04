@@ -25,6 +25,3 @@ data/gpu_tokens.bin
 *.swo
 *~
 .DS_Store
-
-# Note: PNG plots, bpe_report.txt, and data/bpe_benchmark.csv are
-# intentionally NOT ignored - they are the published benchmark artifacts.

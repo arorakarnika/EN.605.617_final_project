@@ -1,9 +1,6 @@
-"""
-Visualize BPE benchmark results from the CUDA sweep CSV.
-"""
+"""Scaling sweep CSV: tiktoken baselines per tag, text report, throughput/speedup PNGs."""
 
 import argparse
-import subprocess
 import time
 from pathlib import Path
 
@@ -16,19 +13,16 @@ import tiktoken
 sns.set_style("whitegrid")
 plt.rcParams["font.size"] = 10
 
-# Corpus tags from scripts/run_scaling_benchmark.sh -> text path for tiktoken baselines.
 TAG_TEXT_PATH = {
     "corpus_1MB": "data/corpus_1MB.txt",
     "corpus_5MB": "data/corpus_5MB.txt",
     "corpus_10MB": "data/corpus_10MB.txt",
-    "corpus_50MB": "data/corpus_50MB.txt",
+    "corpus_20MB": "data/corpus_20MB.txt",
     "corpus_full": "data/corpus.txt",
 }
 
 
 def resolve_corpus_text_path(tag):
-    """Map CSV tag to UTF-8 text file for tiktoken baselines. Prefer explicit
-    TAG_TEXT_PATH; otherwise use data/<tag>.txt when present (older sweeps)."""
     mapped = TAG_TEXT_PATH.get(tag)
     if mapped is not None:
         return mapped
@@ -65,10 +59,8 @@ def time_iterations(fn, iterations):
 def measure_baselines(text, pieces, total_bytes, encoding_name, iterations):
     enc = tiktoken.get_encoding(encoding_name)
     pat = regex.compile(enc._pat_str)
-
     enc.encode_ordinary(text)
     enc._encode_single_piece(pieces[0]) if pieces else None
-
     avg_full = time_iterations(lambda: enc.encode_ordinary(text), iterations)
 
     def per_piece():
@@ -80,10 +72,7 @@ def measure_baselines(text, pieces, total_bytes, encoding_name, iterations):
     full_ids = enc.encode_ordinary(text)
     loop_ids = per_piece()
     num_tokens = len(full_ids)
-
-    avg_regex = time_iterations(lambda: [m.group(0) for m in pat.finditer(text)],
-                                iterations)
-
+    avg_regex = time_iterations(lambda: [m.group(0) for m in pat.finditer(text)], iterations)
     mb = total_bytes / (1024.0 * 1024.0)
     return {
         "encode_full": {
@@ -105,27 +94,7 @@ def measure_baselines(text, pieces, total_bytes, encoding_name, iterations):
     }
 
 
-def maybe_run_sweep(executable, csv_path, iters, ranks_path, pieces_path):
-    if Path(csv_path).exists() and Path(csv_path).stat().st_size > 0:
-        print("Reusing existing CSV: {}".format(csv_path))
-        return
-    if not Path(executable).exists():
-        raise SystemExit("Executable {} not found - run 'make' first".format(executable))
-    print("Running sweep: {} --sweep --csv {}".format(executable, csv_path))
-    subprocess.run(
-        [
-            executable, "--sweep", "--csv", csv_path,
-            "--iters", str(iters),
-            "--ranks", ranks_path,
-            "--pieces", pieces_path,
-        ],
-        check=True,
-    )
-
-
 def normalize_columns(df):
-    # Backwards compatibility: older CSVs used avg_time_ms / mbps / tokens_per_sec
-    # for the kernel-only run and had no e2e columns at all.
     if "avg_time_ms" in df.columns and "kernel_time_ms" not in df.columns:
         df = df.rename(columns={
             "avg_time_ms": "kernel_time_ms",
@@ -139,9 +108,6 @@ def normalize_columns(df):
 
 
 def add_pipeline_columns(df, baselines):
-    """Combine GPU end-to-end time with Python regex pre-split time so the
-    GPU side measures the same work as tiktoken.encode(): regex split + BPE
-    + transfers. The result is the truly apples-to-apples pipeline number."""
     df = df.copy()
     regex_ms = baselines["regex_only"]["avg_time_ms"]
     df["pipeline_time_ms"] = df["e2e_time_ms"] + regex_ms
@@ -156,14 +122,13 @@ def collect_tags(df):
         return []
     s = df["tag"].fillna("").astype(str).str.strip()
     u = {x for x in s.unique().tolist() if x}
-    preferred = ["corpus_1MB", "corpus_5MB", "corpus_10MB", "corpus_50MB", "corpus_full"]
+    preferred = ["corpus_1MB", "corpus_5MB", "corpus_10MB", "corpus_20MB", "corpus_full"]
     out = [t for t in preferred if t in u]
     out.extend(sorted(u - set(out)))
     return out
 
 
 def gather_scaling_tag_runs(df, encoding, iters):
-    """One tiktoken baseline pass per tag, in collect_tags order."""
     ordered = []
     for tag in collect_tags(df):
         rel = resolve_corpus_text_path(tag)
@@ -199,11 +164,12 @@ def gather_scaling_tag_runs(df, encoding, iters):
 
 
 def write_scaling_comparison_report(ordered, out_path):
-    lines = []
-    lines.append("BPE sweep vs tiktoken (all rows)")
-    lines.append("GPU MB/s = (input_bytes / 1048576) / (time_ms / 1000).")
-    lines.append("x_k_pp = GPU kernel MB/s / tiktoken per_piece; x_e_enc = e2e / encode; x_p_enc = pipeline / encode.")
-    lines.append("")
+    lines = [
+        "BPE sweep vs tiktoken (all rows)",
+        "GPU MB/s = (input_bytes / 1048576) / (time_ms / 1000).",
+        "x_k_pp = GPU kernel MB/s / tiktoken per_piece; x_e_enc = e2e / encode; x_p_enc = pipeline / encode.",
+        "",
+    ]
     cols = [
         "kernel", "threads_per_block", "blocks", "iterations",
         "num_pieces", "input_bytes", "num_tokens",
@@ -216,21 +182,17 @@ def write_scaling_comparison_report(ordered, out_path):
             lines.append("[{}] {}".format(item["tag"], item["msg"]))
             lines.append("")
             continue
-        tag = item["tag"]
-        rel = item["rel"]
         b = item["baselines"]
-        sub = item["sub"]
-        lines.append("[{}] {}".format(tag, rel))
+        lines.append("[{}] {}".format(item["tag"], item["rel"]))
         lines.append(
             "  encode_full {:.3f} ms {:.2f} MB/s  |  per_piece {:.3f} ms {:.2f} MB/s  |  regex {:.3f} ms {:.2f} MB/s".format(
                 b["encode_full"]["avg_time_ms"], b["encode_full"]["mbps"],
                 b["per_piece_loop"]["avg_time_ms"], b["per_piece_loop"]["mbps"],
                 b["regex_only"]["avg_time_ms"], b["regex_only"]["mbps"]))
         lines.append("")
-        lines.append(sub[cols].to_string(index=False))
+        lines.append(item["sub"][cols].to_string(index=False))
         lines.append("")
     Path(out_path).write_text("\n".join(lines))
-    print("Saved {}".format(out_path))
 
 
 def _best_max(sub_df, col):
@@ -240,11 +202,9 @@ def _best_max(sub_df, col):
 
 
 def plot_scaling_vs_input_size(ordered, throughput_path, speedup_path):
-    """Best GPU MB/s at each corpus size vs tiktoken (multi-tag CSV only)."""
     runs = [x for x in ordered if x["kind"] == "ok"]
     if not runs:
-        print("Skipping scaling plots (no tags with corpus files and CSV rows).")
-        return
+        return False
     rows = []
     for item in runs:
         sub = item["sub"]
@@ -291,7 +251,6 @@ def plot_scaling_vs_input_size(ordered, throughput_path, speedup_path):
     plt.tight_layout()
     plt.savefig(throughput_path, dpi=150, bbox_inches="tight")
     plt.close()
-    print("Saved {}".format(throughput_path))
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
     enc_a = [e if e > 0 else float("nan") for e in enc]
@@ -318,281 +277,41 @@ def plot_scaling_vs_input_size(ordered, throughput_path, speedup_path):
     if len(mbs) >= 2 and max(mbs) / max(min(mbs), 1e-9) > 4:
         ax2.set_xscale("log")
 
-    for ax in (ax1, ax2):
-        ax.legend(fontsize=7, loc="best")
-        ax.grid(True, which="both", alpha=0.3)
+    for ax_ in (ax1, ax2):
+        ax_.legend(fontsize=7, loc="best")
+        ax_.grid(True, which="both", alpha=0.3)
     plt.tight_layout()
     plt.savefig(speedup_path, dpi=150, bbox_inches="tight")
     plt.close()
-    print("Saved {}".format(speedup_path))
-
-
-def plot_throughput_vs_threads(df, baselines, output_path):
-    fig, (ax_mbps, ax_tps) = plt.subplots(1, 2, figsize=(14, 5))
-
-    style = {
-        ("v1", "kernel"):   {"color": "#3498db", "linestyle": "-",  "linewidth": 2.0, "alpha": 1.0,
-                             "label": "GPU V1 kernel only"},
-        ("v1", "e2e"):      {"color": "#3498db", "linestyle": "--", "linewidth": 2.0, "alpha": 0.85,
-                             "label": "GPU V1 end-to-end (transfers)"},
-        ("v1", "pipeline"): {"color": "#3498db", "linestyle": ":",  "linewidth": 2.5, "alpha": 0.65,
-                             "label": "GPU V1 pipeline (+ Python regex)"},
-        ("v2", "kernel"):   {"color": "#e74c3c", "linestyle": "-",  "linewidth": 2.0, "alpha": 1.0,
-                             "label": "GPU V2 kernel only"},
-        ("v2", "e2e"):      {"color": "#e74c3c", "linestyle": "--", "linewidth": 2.0, "alpha": 0.85,
-                             "label": "GPU V2 end-to-end (transfers)"},
-        ("v2", "pipeline"): {"color": "#e74c3c", "linestyle": ":",  "linewidth": 2.5, "alpha": 0.65,
-                             "label": "GPU V2 pipeline (+ Python regex)"},
-    }
-
-    for kernel in ("v1", "v2"):
-        sub = df[df["kernel"] == kernel].sort_values("threads_per_block")
-        if sub.empty:
-            continue
-        for which, mbps_col, tps_col in [
-            ("kernel", "kernel_mbps", "kernel_tokens_per_sec"),
-            ("e2e", "e2e_mbps", "e2e_tokens_per_sec"),
-            ("pipeline", "pipeline_mbps", "pipeline_tokens_per_sec"),
-        ]:
-            if mbps_col not in sub.columns or sub[mbps_col].isna().all():
-                continue
-            s = style[(kernel, which)]
-            ax_mbps.plot(sub["threads_per_block"], sub[mbps_col], marker="o", **s)
-            ax_tps.plot(sub["threads_per_block"], sub[tps_col], marker="o", **s)
-
-    for name, info in [
-        ("encode_full",    {"color": "#222222", "linestyle": "-.", "linewidth": 1.5}),
-        ("per_piece_loop", {"color": "#777777", "linestyle": "-.", "linewidth": 1.5}),
-    ]:
-        b = baselines.get(name)
-        if not b:
-            continue
-        label_mbps = "tiktoken {} ({:.1f} MB/s)".format(name, b["mbps"])
-        label_tps = "tiktoken {} ({:.0f} tok/s)".format(name, b["tokens_per_sec"])
-        ax_mbps.axhline(b["mbps"], label=label_mbps, **info)
-        ax_tps.axhline(b["tokens_per_sec"], label=label_tps, **info)
-
-    for ax in (ax_mbps, ax_tps):
-        ax.set_xscale("log", base=2)
-        ax.set_xlabel("Threads per block")
-        ax.legend(fontsize=7, loc="best")
-    ax_mbps.set_ylabel("Throughput (MB/s)")
-    ax_tps.set_ylabel("Throughput (tokens/sec)")
-    ax_mbps.set_title("BPE encode throughput - MB/s")
-    ax_tps.set_title("BPE encode throughput - tokens/sec")
-
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close()
-    print("Saved {}".format(output_path))
-
-
-def _bar_panel(ax, df, values, baseline_mbps, baseline_label, title, colors):
-    bars = ax.bar(df["label"], values, color=colors, alpha=0.85)
-    ax.axhline(1.0, color="gray", linestyle="--",
-               label="{} ({:.1f} MB/s)".format(baseline_label, baseline_mbps))
-    for bar, val in zip(bars, values):
-        if pd.isna(val):
-            continue
-        ax.text(bar.get_x() + bar.get_width() / 2, val,
-                "{:.1f}x".format(val), ha="center", va="bottom", fontsize=8)
-    ax.set_ylabel("Speedup (MB/s ratio)")
-    ax.set_title(title)
-    ax.legend(fontsize=8)
-    ax.tick_params(axis="x", rotation=30)
-    for label in ax.get_xticklabels():
-        label.set_horizontalalignment("right")
-
-
-def plot_speedup_panels(df, baselines, output_path):
-    df = df.copy()
-    df["label"] = df.apply(
-        lambda r: "{} t={}".format(r["kernel"].upper(), int(r["threads_per_block"])),
-        axis=1,
-    )
-    df = df.sort_values(["kernel", "threads_per_block"]).reset_index(drop=True)
-    colors = ["#3498db" if k == "v1" else "#e74c3c" for k in df["kernel"]]
-
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 5))
-
-    per_piece_mbps = baselines["per_piece_loop"]["mbps"]
-    encode_mbps = baselines["encode_full"]["mbps"]
-
-    _bar_panel(ax1, df, df["kernel_mbps"] / per_piece_mbps,
-               per_piece_mbps, "tiktoken per-piece loop",
-               "Kernel-only vs per-piece loop",
-               colors)
-
-    if "e2e_mbps" in df.columns and df["e2e_mbps"].notna().any():
-        _bar_panel(ax2, df, df["e2e_mbps"] / encode_mbps,
-                   encode_mbps, "tiktoken encode()",
-                   "End-to-end vs encode()",
-                   colors)
-    else:
-        ax2.text(0.5, 0.5, "No e2e timing in CSV", ha="center", va="center",
-                 transform=ax2.transAxes, fontsize=11)
-        ax2.set_axis_off()
-
-    if "pipeline_mbps" in df.columns and df["pipeline_mbps"].notna().any():
-        _bar_panel(ax3, df, df["pipeline_mbps"] / encode_mbps,
-                   encode_mbps, "tiktoken encode()",
-                   "Pipeline vs encode()",
-                   colors)
-    else:
-        ax3.text(0.5, 0.5, "No pipeline timing\n(needs e2e timing + regex baseline)",
-                 ha="center", va="center", transform=ax3.transAxes, fontsize=11)
-        ax3.set_axis_off()
-
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close()
-    print("Saved {}".format(output_path))
-
-
-def write_report(df, baselines, output_path):
-    lines = []
-    lines.append("BPE benchmark vs tiktoken")
-    lines.append("")
-    for name in ("encode_full", "per_piece_loop", "regex_only"):
-        b = baselines.get(name)
-        if not b:
-            continue
-        if "tokens_per_sec" in b:
-            lines.append("  {:<16s}  {:7.3f} ms  {:6.2f} MB/s  {:.0f} tok/s".format(
-                name, b["avg_time_ms"], b["mbps"], b["tokens_per_sec"]))
-        else:
-            lines.append("  {:<16s}  {:7.3f} ms  {:6.2f} MB/s".format(
-                name, b["avg_time_ms"], b["mbps"]))
-    lines.append("")
-    lines.append("GPU MB/s = (input_bytes / 1048576) / (time_ms / 1000).")
-    lines.append("x_k_pp = GPU kernel MB/s / tiktoken per_piece; x_e_enc = e2e / encode; x_p_enc = pipeline / encode.")
-    lines.append("")
-
-    per_piece_mbps = baselines["per_piece_loop"]["mbps"]
-    encode_mbps = baselines["encode_full"]["mbps"]
-    regex_ms = baselines["regex_only"]["avg_time_ms"]
-
-    def best(df_, col):
-        if col not in df_.columns or df_[col].isna().all():
-            return None
-        return df_.nlargest(1, col).iloc[0]
-
-    for kernel in ("v1", "v2"):
-        sub = df[df["kernel"] == kernel]
-        if sub.empty:
-            continue
-        kbest = best(sub, "kernel_mbps")
-        ebest = best(sub, "e2e_mbps")
-        pbest = best(sub, "pipeline_mbps")
-        lines.append("Best {}:".format(kernel.upper()))
-        if kbest is not None:
-            lines.append("  kernel  t={} blk={}  {:.3f} ms  {:.2f} MB/s  x_per_piece={:.2f}".format(
-                int(kbest["threads_per_block"]), int(kbest["blocks"]),
-                kbest["kernel_time_ms"], kbest["kernel_mbps"],
-                kbest["kernel_mbps"] / per_piece_mbps))
-        if ebest is not None and not pd.isna(ebest["e2e_mbps"]):
-            lines.append("  e2e     t={} blk={}  {:.3f} ms  {:.2f} MB/s  x_encode={:.2f}".format(
-                int(ebest["threads_per_block"]), int(ebest["blocks"]),
-                ebest["e2e_time_ms"], ebest["e2e_mbps"],
-                ebest["e2e_mbps"] / encode_mbps))
-        if pbest is not None and not pd.isna(pbest["pipeline_mbps"]):
-            lines.append("  pipeline t={} blk={}  {:.3f} ms  ({:.3f} regex + {:.3f} e2e)  {:.2f} MB/s  x_encode={:.2f}".format(
-                int(pbest["threads_per_block"]), int(pbest["blocks"]),
-                pbest["pipeline_time_ms"], regex_ms, pbest["e2e_time_ms"],
-                pbest["pipeline_mbps"], pbest["pipeline_mbps"] / encode_mbps))
-        lines.append("")
-
-    df2 = df.copy()
-    df2["x_k_pp"] = df2["kernel_mbps"] / per_piece_mbps
-    df2["x_e_enc"] = df2["e2e_mbps"] / encode_mbps
-    df2["x_p_enc"] = df2["pipeline_mbps"] / encode_mbps
-    cols = [
-        "kernel", "threads_per_block", "blocks", "iterations",
-        "num_pieces", "input_bytes", "num_tokens",
-        "kernel_time_ms", "x_k_pp",
-        "e2e_time_ms", "x_e_enc",
-        "pipeline_time_ms", "x_p_enc",
-    ]
-    if "tag" in df2.columns and df2["tag"].fillna("").astype(str).str.strip().ne("").any():
-        cols = ["tag"] + cols
-    lines.append("All runs")
-    lines.append(df2[cols].to_string(index=False))
-
-    Path(output_path).write_text("\n".join(lines))
-    print("Saved {}".format(output_path))
+    return True
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Visualize BPE sweep CSV vs tiktoken")
-    parser.add_argument("--csv", default="data/bpe_benchmark.csv")
-    parser.add_argument("--pieces", default="data/pieces.bin")
-    parser.add_argument("--ranks", default="data/bpe_ranks.bin")
-    parser.add_argument("--text", default=None,
-                        help="Text for baselines; optional if CSV has one known scaling tag")
-    parser.add_argument("--scaling-report", default="bpe_scaling_report.txt",
-                        help="Output path when CSV has multiple tags")
-    parser.add_argument("--executable", default="./bpe_tokenizer.exe")
-    parser.add_argument("--encoding", default="cl100k_base")
-    parser.add_argument("--iters", type=int, default=100,
-                        help="Iterations for both the GPU sweep and the tiktoken baselines")
-    parser.add_argument("--no-run", action="store_true",
-                        help="Do not invoke the executable even if CSV is missing")
-    args = parser.parse_args()
+    p = argparse.ArgumentParser(description="Scaling sweep CSV: report + PNGs vs tiktoken")
+    p.add_argument("--csv", default="data/bpe_benchmark_scaling.csv")
+    p.add_argument("--scaling-report", default="bpe_scaling_report.txt")
+    p.add_argument("--encoding", default="cl100k_base")
+    p.add_argument("--iters", type=int, default=100)
+    args = p.parse_args()
 
-    if not args.no_run:
-        maybe_run_sweep(args.executable, args.csv, args.iters, args.ranks, args.pieces)
-
-    if not Path(args.csv).exists():
-        raise SystemExit("CSV not found: {} (re-run without --no-run, or create it manually)".format(args.csv))
-
-    df = pd.read_csv(args.csv)
+    cpath = Path(args.csv)
+    if not cpath.is_file():
+        raise SystemExit("missing {}".format(args.csv))
+    df = normalize_columns(pd.read_csv(cpath))
     if df.empty:
-        raise SystemExit("CSV is empty: {}".format(args.csv))
-    df = normalize_columns(df)
-
-    print("\nLoaded {} sweep rows from {}".format(len(df), args.csv))
-    print(df.to_string(index=False))
-
+        raise SystemExit("empty CSV")
     tags = collect_tags(df)
-    if len(tags) > 1:
-        print("\nMulti-tag CSV; writing {} and scaling size plots.".format(args.scaling_report))
-        ordered = gather_scaling_tag_runs(df, args.encoding, args.iters)
-        write_scaling_comparison_report(ordered, args.scaling_report)
-        plot_scaling_vs_input_size(
-            ordered,
-            "scaling_throughput_vs_size.png",
-            "scaling_speedup_vs_size.png",
-        )
-        return
+    if not tags:
+        raise SystemExit("CSV needs non-empty tag column")
 
-    text_path = args.text
-    if text_path is None:
-        if len(tags) == 1:
-            cand = resolve_corpus_text_path(tags[0])
-            if cand and Path(cand).is_file():
-                text_path = cand
-        if text_path is None:
-            raise SystemExit(
-                "Pass --text for baselines, or use a CSV with multiple tag values (writes {} and scaling PNGs).".format(
-                    args.scaling_report))
-
-    text = Path(text_path).read_text(encoding="utf-8")
-    pieces, total_bytes = pieces_from_text(text, args.encoding)
-    print("\nMeasuring tiktoken baselines ({} iterations)...".format(args.iters))
-    baselines = measure_baselines(text, pieces, total_bytes, args.encoding, args.iters)
-    for name, b in baselines.items():
-        if "tokens_per_sec" in b:
-            print("  {:<16s}: {:7.3f} ms  ->  {:6.2f} MB/s  ({:.0f} tok/s)".format(
-                name, b["avg_time_ms"], b["mbps"], b["tokens_per_sec"]))
-        else:
-            print("  {:<16s}: {:7.3f} ms  ->  {:6.2f} MB/s".format(
-                name, b["avg_time_ms"], b["mbps"]))
-
-    df = add_pipeline_columns(df, baselines)
-
-    plot_throughput_vs_threads(df, baselines, "throughput_vs_threads.png")
-    plot_speedup_panels(df, baselines, "speedup_vs_tiktoken.png")
-    write_report(df, baselines, "bpe_report.txt")
+    ordered = gather_scaling_tag_runs(df, args.encoding, args.iters)
+    write_scaling_comparison_report(ordered, args.scaling_report)
+    wrote_png = plot_scaling_vs_input_size(
+        ordered, "scaling_throughput_vs_size.png", "scaling_speedup_vs_size.png")
+    if wrote_png:
+        print("wrote {} + scaling PNGs".format(args.scaling_report))
+    else:
+        print("wrote {} (no PNGs: missing corpus files for tags)".format(args.scaling_report))
 
 
 if __name__ == "__main__":

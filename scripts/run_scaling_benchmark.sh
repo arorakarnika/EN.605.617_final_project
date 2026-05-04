@@ -2,7 +2,7 @@
 # Full scaling benchmark: fetch corpus if missing, export pieces per size,
 # CUDA sweep with CSV tags, verify, combined scaling report.
 
-ITERS=100
+ITERS=10
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -33,7 +33,7 @@ SIZES=(
   "corpus_1MB:data/corpus_1MB.txt"
   "corpus_5MB:data/corpus_5MB.txt"
   "corpus_10MB:data/corpus_10MB.txt"
-  "corpus_50MB:data/corpus_50MB.txt"
+  "corpus_20MB:data/corpus_20MB.txt"
   "corpus_full:data/corpus.txt"
 )
 
@@ -69,8 +69,8 @@ for entry in "${SIZES[@]}"; do
 done
 
 echo ""
-echo "=== bpe_scaling_report.txt + scaling PNGs (--no-run) ==="
-${UV} src/bpe_visualizer.py --csv "${CSV_OUT}" --no-run --iters "${ITERS}"
+echo "=== bpe_scaling_report.txt + scaling PNGs ==="
+${UV} src/bpe_visualizer.py --csv "${CSV_OUT}" --iters "${ITERS}"
 
 echo ""
 echo "Done. Master CSV: ${CSV_OUT}"

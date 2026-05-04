@@ -28,6 +28,14 @@ BOOKS = {
     "complete_works_of_shakespeare": "https://www.gutenberg.org/cache/epub/100/pg100.txt",
     "war_and_peace": "https://www.gutenberg.org/cache/epub/2600/pg2600.txt",
     "les_miserables": "https://www.gutenberg.org/cache/epub/135/pg135.txt",
+    "bible": "https://www.gutenberg.org/cache/epub/10/pg10.txt",
+    "count_of_monte_cristo": "https://www.gutenberg.org/cache/epub/1184/pg1184.txt",
+    "brothers_karamazov": "https://www.gutenberg.org/cache/epub/28054/pg28054.txt",
+    "city_of_god": "https://www.gutenberg.org/cache/epub/45304/pg45304.txt",
+    "middlemarch": "https://www.gutenberg.org/cache/epub/145/pg145.txt",
+    "complete_chaucer": "https://www.gutenberg.org/cache/epub/22120/pg22120.txt",
+    "life_of_charles_dickens": "https://www.gutenberg.org/cache/epub/25851/pg25851.txt",
+
 }
 
 
@@ -130,8 +138,8 @@ def main():
     parser.add_argument("--output", default="data/corpus.txt", help="Where to write the cleaned full text")
     parser.add_argument(
         "--sizes",
-        default="1048576,5242880,10485760,52428800",
-        help="Comma-separated byte sizes for truncated copies (0 disables). Default: 1,5,10,50 MiB",
+        default="1048576,5242880,10485760,20971520",
+        help="Comma-separated byte sizes for truncated copies (0 disables). Default: 1,5,10,20 MB",
     )
     args = parser.parse_args()
 

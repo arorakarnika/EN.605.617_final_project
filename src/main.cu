@@ -1,9 +1,9 @@
 // CLI entry point for the GPU BPE tokenizer.
 //
 // Usage examples:
-//   ./bpe_tokenizer.exe                                  # default: V2 kernel, 256 threads, 10 iters
+//   ./bpe_tokenizer.exe                              
 //   ./bpe_tokenizer.exe --kernel v1 --threads 256 --iters 100
-//   ./bpe_tokenizer.exe --sweep --csv data/bpe_benchmark.csv --iters 100
+//   ./bpe_tokenizer.exe --sweep --csv data/bpe_benchmark_scaling.csv --tag corpus_1MB --iters 100
 
 #include <stdio.h>
 #include <stdlib.h>
