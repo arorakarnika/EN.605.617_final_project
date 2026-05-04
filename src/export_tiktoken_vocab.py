@@ -3,7 +3,7 @@ Export tiktoken artifacts for the GPU BPE pipeline.
 
 Two outputs:
   1. data/bpe_ranks.bin
-       Binary table of (token_bytes -> rank) entries, sorted lexicographically
+       Binary table of (token_bytes -> rank) entries, sorted
        by token_bytes. The GPU loads this into a fixed-stride array and
        performs binary search to look up the rank of an arbitrary byte
        sequence (the rank is also the token id for tiktoken encodings).
@@ -12,23 +12,6 @@ Two outputs:
        Pre-split text pieces produced by tiktoken's regex pattern. Each piece
        is fed independently into the GPU BPE kernel.
 
-Binary layouts
---------------
-bpe_ranks.bin
-    uint32 num_ranks
-    uint32 max_token_len
-    repeat num_ranks times:
-        uint32 length
-        bytes  token_bytes (padded to max_token_len)
-        uint32 rank
-
-pieces.bin
-    uint32 num_pieces
-    uint32 total_bytes
-    repeat num_pieces times:
-        uint32 offset_in_blob
-        uint32 length
-    bytes blob[total_bytes]
 """
 
 import argparse

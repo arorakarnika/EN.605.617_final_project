@@ -1,31 +1,5 @@
 """
 Visualize BPE benchmark results from the CUDA sweep CSV.
-
-What is timed
--------------
-GPU side (from the CSV produced by ./bpe_tokenizer.exe --sweep --csv ...):
-    kernel_*  : kernel-only time. Inputs already on device, outputs stay on
-                device. Compares directly to the per-piece tiktoken loop.
-    e2e_*     : H2D pieces + kernel + D2H token IDs per iteration. The 13.6 MB
-                ranks table is loaded once and reused (matches a long-running
-                tokenizer service). Compares directly to enc.encode(text).
-
-tiktoken baselines (measured by this script in Python on the SAME corpus):
-    encode_full      : enc.encode(text). Single Rust call: regex pre-split +
-                       per-piece BPE. This is what production users run.
-    per_piece_loop   : Python loop calling enc._encode_single_piece(piece) for
-                       every piece. Same BPE work, but pays Python<->Rust
-                       boundary overhead once per piece.
-    regex_only       : Python regex.finditer time on the raw text, reported
-                       so the GPU end-to-end number can be mentally combined
-                       with it for an apples-to-apples pipeline comparison.
-
-Apples-to-apples comparisons
-----------------------------
-    GPU kernel_*  vs  tiktoken per_piece_loop  -> "BPE merge core" speedup
-    GPU e2e_*     vs  tiktoken encode_full     -> "tokenizer service" speedup
-                                                  (when GPU regex-split is
-                                                   amortized or done in Rust)
 """
 
 import argparse
@@ -337,22 +311,6 @@ def write_report(df, baselines, output_path):
             lines.append("  speedup vs tiktoken encode():       {:.2f}x  <-- truly fair number".format(
                 pbest["pipeline_mbps"] / encode_mbps))
         lines.append("")
-
-    lines.append("How to read these speedups:")
-    lines.append("  - kernel-only vs per_piece_loop: how much faster the GPU's BPE merge")
-    lines.append("    code is than tiktoken's Rust BPE core (both fed pre-split pieces).")
-    lines.append("  - end-to-end vs encode(): how much faster a tokenizer service backed")
-    lines.append("    by this kernel is, ASSUMING the regex pre-split is amortized")
-    lines.append("    (cached, batched, or moved off the critical path).")
-    lines.append("  - pipeline vs encode(): the truly apples-to-apples number. Includes")
-    lines.append("    Python regex on the GPU side, matching tiktoken.encode()'s internal")
-    lines.append("    Rust regex + BPE. Smaller speedup because Python regex is now the")
-    lines.append("    new bottleneck - replacing it with PCRE2 in C++ would unlock the")
-    lines.append("    full kernel-only speedup.")
-    lines.append("")
-    lines.append("All configurations:")
-    lines.append(df.to_string(index=False))
-    lines.append("")
 
     Path(output_path).write_text("\n".join(lines))
     print("Saved {}".format(output_path))

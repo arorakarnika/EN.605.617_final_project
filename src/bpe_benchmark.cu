@@ -3,15 +3,13 @@
 // Allocates device buffers, copies the (large, reused) ranks table once,
 // then runs two timed passes:
 //   1. Kernel-only: warm buffers already on device, outputs stay on device.
-//   2. End-to-end:  H2D pieces + kernel + D2H token IDs per iteration. The
-//                   ranks table is intentionally NOT re-uploaded - in any
-//                   realistic deployment that 13.6 MB table is loaded once
-//                   and reused across many requests.
+//   2. End-to-end:  Host to device pieces + kernel + device to host transfers of token IDs per iteration.
 
 #include <stdio.h>
 #include <stdlib.h>
 #include "bpe.h"
 
+// Compute offsets so we can write the token IDs to the output file in the correct order.
 static void compute_token_offsets(const Pieces* pieces, int* offsets) {
     int running = 0;
     for (int i = 0; i < pieces->num_pieces; i++) {
@@ -20,6 +18,9 @@ static void compute_token_offsets(const Pieces* pieces, int* offsets) {
     }
 }
 
+// Run the BPE benchmark
+// This kernel copies the pieces to the device, runs the BPE kernel,
+//  and copies the token IDs back to the host.
 void run_bpe_benchmark(const Pieces* pieces,
                        const BPERank* h_ranks,
                        int num_ranks,

@@ -1,18 +1,14 @@
 """
-Download a public-domain text from Project Gutenberg and emit truncated
+Download a public-domain corpus from Project Gutenberg and output truncated
 versions at several sizes for scaling experiments.
 
-Defaults to Pride and Prejudice (about 700 KB after header/footer stripping),
-which is more than enough to saturate the GPU BPE pipeline with all four
-standard size buckets (1 KB, 10 KB, 100 KB, 1 MB). The Gutenberg cache URLs
-are stable and require no authentication.
-
 Outputs (with default flags):
-    data/corpus.txt           full cleaned book
+    data/corpus.txt           full cleaned corpus
     data/corpus_1KB.txt       first 1024 bytes
     data/corpus_10KB.txt      first 10240 bytes
     data/corpus_100KB.txt     first 102400 bytes
-    data/corpus_1MB.txt       first 1048576 bytes (or full text if smaller)
+    data/corpus_1MB.txt       first 1048576 bytes
+
 """
 
 import argparse
