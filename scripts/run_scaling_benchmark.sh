@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Full scaling benchmark: fetch corpus if missing, export pieces per size,
-# CUDA sweep with CSV tags, verify, per-size plots.
+# CUDA sweep with CSV tags, verify, combined scaling report.
 
 ITERS=100
 
@@ -21,19 +21,19 @@ fi
 mkdir -p data
 
 if [[ ! -f data/corpus.txt ]]; then
-  echo "=== Fetching corpus (pride_and_prejudice) ==="
-  ${UV} src/fetch_corpus.py --book pride_and_prejudice --output data/corpus.txt
+  echo "=== Fetching combined corpus (all Gutenberg books in BOOKS) ==="
+  ${UV} src/fetch_corpus.py --output data/corpus.txt
 else
-  echo "=== Using existing data/corpus.txt ==="
+  echo "=== Using existing data/corpus.txt (delete to re-fetch combined corpus) ==="
 fi
 
 rm -f "${CSV_OUT}"
 
 SIZES=(
-  "corpus_1KB:data/corpus_1KB.txt"
-  "corpus_10KB:data/corpus_10KB.txt"
-  "corpus_100KB:data/corpus_100KB.txt"
   "corpus_1MB:data/corpus_1MB.txt"
+  "corpus_5MB:data/corpus_5MB.txt"
+  "corpus_10MB:data/corpus_10MB.txt"
+  "corpus_50MB:data/corpus_50MB.txt"
   "corpus_full:data/corpus.txt"
 )
 
@@ -66,23 +66,13 @@ for entry in "${SIZES[@]}"; do
 
   echo "=== verify_bpe.py ==="
   ${UV} src/verify_bpe.py --text "${TEXT}"
-
-  PLOT_DIR="data/scaling_plots/${TAG}"
-  mkdir -p "${PLOT_DIR}"
-  FILTERED="${PLOT_DIR}/sweep_${TAG}.csv"
-  awk -F',' -v tag="${TAG}" 'NR==1 || $1==tag' "${CSV_OUT}" > "${FILTERED}"
-  echo "=== bpe_visualizer.py -> ${PLOT_DIR}/ ==="
-  (
-    cd "${PLOT_DIR}"
-    ${UV} "${REPO_ROOT}/src/bpe_visualizer.py" --csv "${FILTERED}" \
-      --pieces "${REPO_ROOT}/data/pieces.bin" \
-      --text "${REPO_ROOT}/${TEXT}" \
-      --executable "${EXE}" \
-      --no-run \
-      --iters "${ITERS}"
-  )
 done
 
 echo ""
+echo "=== bpe_scaling_report.txt + scaling PNGs (--no-run) ==="
+${UV} src/bpe_visualizer.py --csv "${CSV_OUT}" --no-run --iters "${ITERS}"
+
+echo ""
 echo "Done. Master CSV: ${CSV_OUT}"
-echo "Per-size outputs: data/scaling_plots/<tag>/"
+echo "Combined report: bpe_scaling_report.txt"
+echo "Scaling plots: scaling_throughput_vs_size.png scaling_speedup_vs_size.png"
